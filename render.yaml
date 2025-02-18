@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: tax-law-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python tax_law_api.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: PINECONE_INDEX_NAME
+        value: taxlawlegato 
