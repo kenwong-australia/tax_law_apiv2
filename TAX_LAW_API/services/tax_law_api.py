@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_openai import ChatOpenAI
 
-from utils.config import (
+from TAX_LAW_API.utils.config import (
     OPENAI_API_KEY, 
     PINECONE_API_KEY, 
     PINECONE_INDEX_NAME,
