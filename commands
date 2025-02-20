@@ -1,0 +1,3 @@
+mkdir -p TAX_LAW_API/services TAX_LAW_API/utils 
+chmod +x TAX_LAW_API/render_tax_law_api_start.sh
+chmod +x TAX_LAW_API/render_ingest_start.sh 
