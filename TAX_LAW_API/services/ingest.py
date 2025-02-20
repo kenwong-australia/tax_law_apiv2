@@ -1,8 +1,8 @@
 import time
 import os
 import logging
-from utils.config import PINECONE_API_KEY, PINECONE_INDEX_NAME
-from utils.embeddings import create_vector_store
+from TAX_LAW_API.utils.config import PINECONE_API_KEY, PINECONE_INDEX_NAME
+from TAX_LAW_API.utils.embeddings import create_vector_store
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

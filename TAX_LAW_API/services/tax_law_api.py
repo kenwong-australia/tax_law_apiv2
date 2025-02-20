@@ -12,7 +12,7 @@ from TAX_LAW_API.utils.config import (
     LLM_MODEL,
     LLM_TEMPERATURE
 )
-from utils.embeddings import create_vector_store
+from TAX_LAW_API.utils.embeddings import create_vector_store
 
 app = FastAPI(title="Tax Law RAG API")
 
