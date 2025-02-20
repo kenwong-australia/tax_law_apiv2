@@ -4,7 +4,7 @@ services:
     name: tax-law-api
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: ./render_tax_law_api_start.sh
+    startCommand: python services/tax_law_api.py  # Direct Python command
     envVars:
       - key: PYTHON_VERSION
         value: 3.13

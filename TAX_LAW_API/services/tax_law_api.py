@@ -4,6 +4,8 @@ from typing import Optional, Dict, Any, List
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_openai import ChatOpenAI
+import os
+import logging
 
 from TAX_LAW_API.utils.config import (
     OPENAI_API_KEY, 
@@ -180,16 +182,26 @@ Respond in exactly this format with these exact section headers:
 # Global RAG instance
 rag_instance = None
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 @app.on_event("startup")
 async def startup_event():
     global rag_instance
+    logger.info("Starting up Tax Law API...")
     if not all([OPENAI_API_KEY, PINECONE_API_KEY]):
+        logger.error("Missing required environment variables")
         raise RuntimeError("Missing required environment variables")
     
-    print("Initializing RAG system...")
-    query_engine = TaxLawQueryEngine()
-    rag_instance = TaxLawRAG(query_engine)
-    print("RAG system initialized successfully")
+    try:
+        logger.info("Initializing RAG system...")
+        query_engine = TaxLawQueryEngine()
+        rag_instance = TaxLawRAG(query_engine)
+        logger.info("RAG system initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize RAG system: {str(e)}")
+        raise
 
 @app.post("/query")
 async def query_tax_law(query_params: TaxQuery):
@@ -207,6 +219,10 @@ async def query_tax_law(query_params: TaxQuery):
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+@app.get("/")
+async def root():
+    return {"message": "Tax Law API is running"}
 
 if __name__ == "__main__":
     import uvicorn
