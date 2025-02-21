@@ -6,6 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from langchain_openai import ChatOpenAI
 import os
 import logging
+import requests
+from docx import Document
+import tempfile
 
 from TAX_LAW_API.utils.config import (
     OPENAI_API_KEY, 
@@ -15,6 +18,7 @@ from TAX_LAW_API.utils.config import (
     LLM_TEMPERATURE
 )
 from TAX_LAW_API.utils.embeddings import create_vector_store
+from .document_service import DocumentURL, process_document_url
 
 app = FastAPI(title="Tax Law RAG API")
 
@@ -223,6 +227,10 @@ async def health_check():
 @app.get("/")
 async def root():
     return {"message": "Tax Law API is running"}
+
+@app.post("/process-document")
+async def process_document(doc_request: DocumentURL):
+    return await process_document_url(doc_request)
 
 if __name__ == "__main__":
     import uvicorn
