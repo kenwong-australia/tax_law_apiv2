@@ -51,13 +51,35 @@ class TaxLawQueryEngine:
             pinecone_api_key=pinecone_api_key
         )
 
-    def retrieve_context(self, query: str, k: int = 4) -> str:
+    def retrieve_context(self, query: str, k: int = 4) -> tuple:
         results = self.embedding_store.similarity_search(query, k=k)
         context = ""
+        sources = []
+        
         for result in results:
-            context += f"\nSection: {result.metadata['full_reference']}\n"
+            # Extract metadata for context and sources
+            full_reference = result.metadata.get('full_reference', 'Unknown Reference')
+            section_url = result.metadata.get('section_url', '')
+            source_url = result.metadata.get('source_url', '')
+            section = result.metadata.get('section', '')
+            
+            # Add to formatted context
+            context += f"\nSection: {full_reference}\n"
+            if section_url:
+                context += f"Section URL: {section_url}\n"
+            if source_url:
+                context += f"Source URL: {source_url}\n"
             context += f"{result.page_content}\n"
-        return context
+            
+            # Add to sources list for structured access
+            sources.append({
+                "full_reference": full_reference,
+                "section": section,
+                "section_url": section_url,
+                "source_url": source_url
+            })
+            
+        return context, sources
 
 class TaxLawRAG:
     def __init__(self, query_engine: TaxLawQueryEngine, openai_api_key: str):
@@ -74,6 +96,8 @@ class TaxLawRAG:
 Query: {query_params.query}
 
 Context: {context}
+
+When citing sources, include both section URLs and source URLs when available. Format citations as "Citation Name | Citation URL" where the URL can be either the section URL or source URL, preferring section URL when available.
 
 Respond in exactly this format with these exact section headers:
 
@@ -164,8 +188,8 @@ Respond in exactly this format with these exact section headers:
         return sections, extracted_citations
 
     def answer_question(self, query_params: TaxQuery) -> Dict[str, Any]:
-        # Retrieve context
-        context = self.query_engine.retrieve_context(query_params.query)
+        # Retrieve context and sources
+        context, sources = self.query_engine.retrieve_context(query_params.query)
         
         # Generate response
         prompt = self.generate_response_prompt(query_params, context)
@@ -175,9 +199,10 @@ Respond in exactly this format with these exact section headers:
         try:
             sections, citations = self.parse_response(response.content)
             
-            # Create the response structure with citations as a separate field
+            # Create the response structure with citations and sources as separate fields
             result = sections.copy()
             result["citations"] = citations
+            result["sources"] = sources  # Add the structured source information
             
             return result
         except Exception as e:
