@@ -3,7 +3,7 @@ services:
   - type: web
     name: tax-law-api
     env: python
-    buildCommand: pip install -r ./TAX_LAW_API/requirements.txt
+    buildCommand: pip install -r requirements.txt
     startCommand: python ./TAX_LAW_API/services/tax_law_api.py
     envVars:
       - key: PYTHON_VERSION
@@ -19,7 +19,7 @@ services:
   - type: worker
     name: tax-law-ingest
     env: python
-    buildCommand: pip install -r ./TAX_LAW_API/requirements.txt
+    buildCommand: pip install -r requirements.txt
     startCommand: python ./TAX_LAW_API/services/ingest.py
     envVars:
       - key: PYTHON_VERSION
