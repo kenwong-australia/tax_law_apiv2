@@ -9,4 +9,3 @@ python-multipart>=0.0.6
 typing-extensions>=4.5.0
 python-docx>=0.8.11  # For reading .docx files
 requests>=2.31.0     # For downloading files from URLs 
-python-docx
