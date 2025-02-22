@@ -3,8 +3,8 @@ services:
   - type: web
     name: tax-law-api
     env: python
-    buildCommand: pip install -r TAX_LAW_API/requirements.txt
-    startCommand: python TAX_LAW_API/services/tax_law_api.py
+    buildCommand: cd TAX_LAW_API && pip install -r requirements.txt
+    startCommand: cd TAX_LAW_API && python services/tax_law_api.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.13
@@ -19,8 +19,8 @@ services:
   - type: worker
     name: tax-law-ingest
     env: python
-    buildCommand: pip install -r TAX_LAW_API/requirements.txt
-    startCommand: python TAX_LAW_API/services/ingest.py
+    buildCommand: cd TAX_LAW_API && pip install -r requirements.txt
+    startCommand: cd TAX_LAW_API && python services/ingest.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.13
@@ -29,4 +29,4 @@ services:
       - key: PINECONE_API_KEY
         sync: false
       - key: PINECONE_INDEX_NAME
-        value: taxlawlegato 
+        value: taxlawlegato
