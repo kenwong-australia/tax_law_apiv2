@@ -1,34 +1,29 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
+import os
+import re
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_pinecone import PineconeVectorStore
+from dotenv import load_dotenv, find_dotenv
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from langchain_openai import ChatOpenAI
-import os
-import logging
-import requests
-from docx import Document
-import tempfile
 
-from TAX_LAW_API.utils.config import (
-    OPENAI_API_KEY, 
-    PINECONE_API_KEY, 
-    PINECONE_INDEX_NAME,
-    LLM_MODEL,
-    LLM_TEMPERATURE
-)
-from TAX_LAW_API.utils.embeddings import create_vector_store
-from .document_service import DocumentURL, process_document_url
+# Load environment variables
+#env_path = find_dotenv()
+#if not env_path:
+    #print("WARNING: .env file not found")
+#load_dotenv(env_path)
 
 app = FastAPI(title="Tax Law RAG API")
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allows all origins
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
 )
 
 class TaxQuery(BaseModel):
@@ -40,25 +35,59 @@ class TaxQuery(BaseModel):
     clarifying_questions: str
     confirmation: str
 
-class TaxLawQueryEngine:
-    def __init__(self):
-        self.vector_store = create_vector_store(PINECONE_INDEX_NAME)
+class Citation(BaseModel):
+    citations_name: str
+    citation_url: str
 
-    def retrieve_context(self, query: str, k: int = 4) -> str:
-        results = self.vector_store.similarity_search(query, k=k)
+class TaxLawQueryEngine:
+    def __init__(self, index_name: str, openai_api_key: str, pinecone_api_key: str):
+        embedding_model = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            openai_api_key=openai_api_key,
+        )
+        self.embedding_store = PineconeVectorStore(
+            index_name=index_name,
+            embedding=embedding_model,
+            pinecone_api_key=pinecone_api_key
+        )
+
+    def retrieve_context(self, query: str, k: int = 4) -> tuple:
+        results = self.embedding_store.similarity_search(query, k=k)
         context = ""
+        sources = []
+        
         for result in results:
-            context += f"\nSection: {result.metadata['full_reference']}\n"
+            # Extract metadata for context and sources
+            full_reference = result.metadata.get('full_reference', 'Unknown Reference')
+            section_url = result.metadata.get('section_url', '')
+            source_url = result.metadata.get('source_url', '')
+            section = result.metadata.get('section', '')
+            
+            # Add to formatted context
+            context += f"\nSection: {full_reference}\n"
+            if section_url:
+                context += f"Section URL: {section_url}\n"
+            if source_url:
+                context += f"Source URL: {source_url}\n"
             context += f"{result.page_content}\n"
-        return context
+            
+            # Add to sources list for structured access
+            sources.append({
+                "full_reference": full_reference,
+                "section": section,
+                "section_url": section_url,
+                "source_url": source_url
+            })
+            
+        return context, sources
 
 class TaxLawRAG:
-    def __init__(self, query_engine: TaxLawQueryEngine):
+    def __init__(self, query_engine: TaxLawQueryEngine, openai_api_key: str):
         self.query_engine = query_engine
         self.llm = ChatOpenAI(
-            openai_api_key=OPENAI_API_KEY,
-            model=LLM_MODEL,
-            temperature=LLM_TEMPERATURE
+            openai_api_key=openai_api_key,
+            model="gpt-4o",
+            temperature=0.0
         )
 
     def generate_response_prompt(self, query_params: TaxQuery, context: str) -> str:
@@ -67,6 +96,8 @@ class TaxLawRAG:
 Query: {query_params.query}
 
 Context: {context}
+
+When citing sources, include both section URLs and source URLs when available. Format citations as "Citation Name | Citation URL" where the URL can be either the section URL or source URL, preferring section URL when available.
 
 Respond in exactly this format with these exact section headers:
 
@@ -89,20 +120,22 @@ Respond in exactly this format with these exact section headers:
 {query_params.confirmation}"""
 
     def extract_citations(self, citations_text: str) -> List[Dict[str, str]]:
-        """Extract citations from text formatted as "Citation Name | Citation URL" """
+        """
+        Extract citations from text formatted as "Citation Name | Citation URL"
+        Returns a list of dictionaries in the required format
+        """
         citations = []
-        try:
-            for line in citations_text.strip().split('\n'):
-                if '|' in line:
-                    parts = line.split('|', 1)
-                    if len(parts) == 2:
-                        citations.append({
-                            "citations_name": parts[0].strip(),
-                            "citation_url": parts[1].strip()
-                        })
-        except Exception as e:
-            logger.error(f"Error extracting citations: {str(e)}")
-        return citations or []  # Return empty list if no citations found
+        for line in citations_text.strip().split('\n'):
+            if '|' in line:
+                parts = line.split('|', 1)
+                if len(parts) == 2:
+                    citation_name = parts[0].strip()
+                    citation_url = parts[1].strip()
+                    citations.append({
+                        "citations_name": citation_name,
+                        "citation_url": citation_url
+                    })
+        return citations
 
     def parse_response(self, response: str) -> Dict[str, Any]:
         # Initialize with default values
@@ -115,97 +148,90 @@ Respond in exactly this format with these exact section headers:
             "confirmation": "No confirmation provided"
         }
         
-        try:
-            # Map section headers to JSON keys
-            header_to_key = {
-                "[TITLE]": "title",
-                "[TAX_RESEARCH]": "tax_research",
-                "[TAX_CITATIONS]": "tax_citations",
-                "[DRAFT_CLIENT_RESPONSE]": "draft_client_response",
-                "[CLARIFYING_QUESTIONS]": "clarifying_questions",
-                "[CONFIRMATION]": "confirmation"
-            }
-            
-            current_section = None
-            current_content = []
-            
-            for line in response.split('\n'):
-                line_stripped = line.strip()
-                if line_stripped in header_to_key:
-                    if current_section and current_section in header_to_key:
-                        sections[header_to_key[current_section]] = '\n'.join(current_content).strip()
-                    current_section = line_stripped
-                    current_content = []
-                elif current_section and line.strip():
-                    current_content.append(line)
-            
-            # Save the last section
-            if current_section and current_section in header_to_key and current_content:
-                sections[header_to_key[current_section]] = '\n'.join(current_content).strip()
-            
-            # Extract citations
-            citations = self.extract_citations(sections["tax_citations"])
-            
-            return sections, citations
-            
-        except Exception as e:
-            logger.error(f"Error parsing response: {str(e)}")
-            return sections, []
+        # Map section headers to JSON keys
+        header_to_key = {
+            "[TITLE]": "title",
+            "[TAX_RESEARCH]": "tax_research",
+            "[TAX_CITATIONS]": "tax_citations",
+            "[DRAFT_CLIENT_RESPONSE]": "draft_client_response",
+            "[CLARIFYING_QUESTIONS]": "clarifying_questions",
+            "[CONFIRMATION]": "confirmation"
+        }
+        
+        # Split the response into sections
+        current_section = None
+        current_content = []
+        
+        # Process each line
+        for line in response.split('\n'):
+            line_stripped = line.strip()
+            # Check if this line is a section header
+            if line_stripped in header_to_key:
+                # Save the previous section if it exists
+                if current_section and current_section in header_to_key:
+                    sections[header_to_key[current_section]] = '\n'.join(current_content).strip()
+                # Start new section
+                current_section = line_stripped
+                current_content = []
+            # If we're in a section and the line isn't empty, add it to current content
+            elif current_section and line.strip():
+                current_content.append(line)
+        
+        # Save the last section
+        if current_section and current_section in header_to_key and current_content:
+            sections[header_to_key[current_section]] = '\n'.join(current_content).strip()
+        
+        # Extract structured citations but don't add to the sections dict yet
+        # We'll handle it differently in the answer_question method
+        extracted_citations = self.extract_citations(sections["tax_citations"])
+        
+        return sections, extracted_citations
 
     def answer_question(self, query_params: TaxQuery) -> Dict[str, Any]:
+        # Retrieve context and sources
+        context, sources = self.query_engine.retrieve_context(query_params.query)
+        
+        # Generate response
+        prompt = self.generate_response_prompt(query_params, context)
+        response = self.llm.invoke(prompt)
+        
+        # Parse response
         try:
-            # Retrieve context
-            context = self.query_engine.retrieve_context(query_params.query)
-            
-            # Generate response
-            prompt = self.generate_response_prompt(query_params, context)
-            response = self.llm.invoke(prompt)
-            
-            # Parse response
             sections, citations = self.parse_response(response.content)
             
-            # Create the response structure
+            # Create the response structure with citations and sources as separate fields
             result = sections.copy()
             result["citations"] = citations
+            result["sources"] = sources  # Add the structured source information
             
             return result
-            
         except Exception as e:
-            logger.error(f"Error in answer_question: {str(e)}")
-            # Return a fallback response
-            return {
-                "title": "Error Processing Query",
-                "tax_research": "An error occurred while processing your query.",
-                "tax_citations": "No citations available",
-                "draft_client_response": "Unable to generate response at this time.",
-                "clarifying_questions": "Service temporarily unavailable.",
-                "confirmation": "Error occurred during processing.",
-                "citations": []
-            }
+            print(f"Error parsing response: {str(e)}")
+            print(f"Raw response: {response.content}")
+            raise
 
 # Global RAG instance
 rag_instance = None
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 @app.on_event("startup")
 async def startup_event():
     global rag_instance
-    logger.info("Starting up Tax Law API...")
-    if not all([OPENAI_API_KEY, PINECONE_API_KEY]):
-        logger.error("Missing required environment variables")
+    
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    pinecone_api_key = os.getenv("PINECONE_API_KEY")
+    pinecone_index_name = os.getenv("PINECONE_INDEX_NAME", "taxlawlegato")
+    
+    if not all([openai_api_key, pinecone_api_key]):
         raise RuntimeError("Missing required environment variables")
     
-    try:
-        logger.info("Initializing RAG system...")
-        query_engine = TaxLawQueryEngine()
-        rag_instance = TaxLawRAG(query_engine)
-        logger.info("RAG system initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize RAG system: {str(e)}")
-        raise
+    print("Initializing RAG system...")
+    query_engine = TaxLawQueryEngine(
+        index_name=pinecone_index_name,
+        openai_api_key=openai_api_key,
+        pinecone_api_key=pinecone_api_key
+    )
+    rag_instance = TaxLawRAG(query_engine, openai_api_key)
+    print("RAG system initialized successfully")
 
 @app.post("/query")
 async def query_tax_law(query_params: TaxQuery):
@@ -213,8 +239,12 @@ async def query_tax_law(query_params: TaxQuery):
         raise HTTPException(status_code=500, detail="RAG system not initialized")
     try:
         result = rag_instance.answer_question(query_params)
+        
+        # Ensure the result has the correct format for citations
         if "citations" not in result or not isinstance(result["citations"], list):
             result["citations"] = []
+            
+        # Return as JSONResponse to ensure proper JSON formatting
         return JSONResponse(content=result)
     except Exception as e:
         print(f"Error processing query: {str(e)}")
@@ -224,14 +254,7 @@ async def query_tax_law(query_params: TaxQuery):
 async def health_check():
     return {"status": "healthy"}
 
-@app.get("/")
-async def root():
-    return {"message": "Tax Law API is running"}
-
-@app.post("/process-document")
-async def process_document(doc_request: DocumentURL):
-    return await process_document_url(doc_request)
-
+# Add this at the end of the file
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000"))) 
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
